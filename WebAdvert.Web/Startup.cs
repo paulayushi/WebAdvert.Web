@@ -1,9 +1,18 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿using System;
+using System.Net;
+using System.Net.Http;
+using Amazon.S3;
+using AutoMapper;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Polly;
+using Polly.Extensions.Http;
+using WebAdvert.Web.Repositories;
+using WebAdvert.Web.ServiceClient;
 
 namespace WebAdvert.Web
 {
@@ -41,7 +50,24 @@ namespace WebAdvert.Web
             {
                 cofigure.LoginPath = "/Accounts/Login";
             });
+            services.AddTransient<IFileUploader, S3FileUploader>();
+            services.AddHttpClient<ISearchApiClient, SearchApiClient>().AddPolicyHandler(GetBackoffRetryPolicy()).AddPolicyHandler(GetCircuitBreakerPolicy()); ;
+            services.AddAutoMapper();
+            services.AddHttpClient<IAdvertApiClient, AdvertApiClient>().AddPolicyHandler(GetBackoffRetryPolicy()).AddPolicyHandler(GetCircuitBreakerPolicy());
             services.AddMvc().SetCompatibilityVersion(CompatibilityVersion.Version_2_2);
+            services.AddDefaultAWSOptions(Configuration.GetAWSOptions());
+            services.AddAWSService<IAmazonS3>();
+        }
+
+        private IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
+        {
+            return HttpPolicyExtensions.HandleTransientHttpError().CircuitBreakerAsync(3, TimeSpan.FromSeconds(60));
+        }
+
+        private IAsyncPolicy<HttpResponseMessage> GetBackoffRetryPolicy()
+        {
+            return HttpPolicyExtensions.HandleTransientHttpError().OrResult(msg => msg.StatusCode == HttpStatusCode.NotFound).WaitAndRetryAsync(3, retryCount =>
+            TimeSpan.FromSeconds(Math.Pow(2, retryCount)));
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
